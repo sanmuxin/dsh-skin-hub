@@ -4,20 +4,110 @@ window.__ModuleLoader__.load({
 		var module = { exports: {} };
 		var exports = module.exports;
 		var React = require("react");
+		var react_jsx_runtime = require("react/jsx-runtime");
 
 		//#region constants
 		/** Dictionary namespace owned by this plugin. */
 		var NS = "skin.manager";
 		/** Host API prefix (same origin). */
 		var API = "/plugins/dsh-skin-manager";
-		/** Skins with a runtime localStorage switch (no restart needed). */
-		var RUNTIME_SWITCHES = {
+		/** Persisted active skin (runtime exclusivity), per browser. */
+		var ACTIVE_KEY = "dsh-skin-manager.active";
+		/** Runtime adapters: how each known skin turns on/off in the live page. */
+		var ADAPTERS = {
 			"dsh-client-liang-intensity-skin": {
-				key: "dsh-liang-intensity-skin.enabled",
-				on: "1",
-				off: "0",
+				isActive: function () {
+					return localStorage.getItem("dsh-liang-intensity-skin.enabled") !== "0";
+				},
+				activate: function () {
+					localStorage.setItem("dsh-liang-intensity-skin.enabled", "1");
+					window.dispatchEvent(new StorageEvent("storage", {
+						key: "dsh-liang-intensity-skin.enabled",
+						newValue: "1",
+						storageArea: localStorage,
+					}));
+				},
+				deactivate: function () {
+					localStorage.setItem("dsh-liang-intensity-skin.enabled", "0");
+					window.dispatchEvent(new StorageEvent("storage", {
+						key: "dsh-liang-intensity-skin.enabled",
+						newValue: "0",
+						storageArea: localStorage,
+					}));
+				},
+			},
+			"@lengduan/dsh-client-ui-skin-815": {
+				// 815 皮肤由 body[data-dsh-815] 属性驱动(整份 CSS 以它为前缀),
+				// 外加 apply 时注入的带 data-skin-owner="815" 标记的 DOM 元素
+				// (侧栏《终战诏书》plaque、标题栏品牌、favicon、caption 等)。
+				// 停用时移除属性并还原内联样式;注入元素由管理器注入的隐藏规则
+				// 接管——body 无 data-dsh-815 时统一 display:none,激活时自动恢复。
+				// 另外,815 插件注入的 widthSheet 里有一条无条件全局规则
+				// `html, body { --vj-sidebar-width: 280px; --vj-titlebar-height: 0px }`,
+				// 它会压扁标题栏/撑宽侧栏导致文字重叠。停用时把整张 sheet 禁用,
+				// 激活时重新启用。
+				WIDTH_SHEET_SELECTOR: '[data-skin-chrome="sidebar-width-rule"]',
+				isActive: function () {
+					return document.body.hasAttribute("data-dsh-815");
+				},
+				activate: function () {
+					var body = document.body;
+					body.setAttribute("data-dsh-815", "");
+					var preview = API + "/preview?bundle=" + encodeURIComponent("@lengduan/dsh-client-ui-skin-815");
+					body.style.setProperty("background-image", "url(" + preview + ")");
+					body.style.setProperty("background-position", "center 42%");
+					body.style.setProperty("background-size", "cover");
+					body.style.setProperty("background-attachment", "fixed");
+					body.style.setProperty("background-repeat", "no-repeat");
+					body.style.setProperty("background-color", "#080a06");
+					var sheet = document.querySelector(this.WIDTH_SHEET_SELECTOR);
+					if (sheet !== null && sheet.sheet !== null) sheet.sheet.disabled = false;
+				},
+				deactivate: function () {
+					var body = document.body;
+					body.removeAttribute("data-dsh-815");
+					var props = [
+						"background-image", "background-position", "background-size",
+						"background-attachment", "background-repeat", "background-color",
+						"--vj-photo", "--vj-rescript",
+					];
+					for (var i = 0; i < props.length; i += 1) body.style.removeProperty(props[i]);
+					var sheet = document.querySelector(this.WIDTH_SHEET_SELECTOR);
+					if (sheet !== null && sheet.sheet !== null) sheet.sheet.disabled = true;
+				},
 			},
 		};
+		/** True when the skin package has a runtime adapter. */
+		function hasAdapter(item) {
+			return Object.prototype.hasOwnProperty.call(ADAPTERS, item.package);
+		}
+		/** Live active state of a skin (runtime adapters first, else assembly). */
+		function liveState(item) {
+			var adapter = ADAPTERS[item.package];
+			if (adapter !== void 0) return adapter.isActive();
+			return item.enabled;
+		}
+		/** Mutually activate one skin and deactivate every other runtime skin. */
+		function activateExclusive(targetPackage, list) {
+			for (var i = 0; i < list.length; i += 1) {
+				var item = list[i];
+				var adapter = ADAPTERS[item.package];
+				if (adapter === void 0) continue;
+				if (item.package === targetPackage) adapter.activate();
+				else adapter.deactivate();
+			}
+			localStorage.setItem(ACTIVE_KEY, targetPackage);
+		}
+		/** Deactivate every runtime skin (back to the stock look). */
+		function deactivateAll(list) {
+			for (var i = 0; i < list.length; i += 1) {
+				var item = list[i];
+				var adapter = ADAPTERS[item.package];
+				if (adapter === void 0) continue;
+				adapter.deactivate();
+			}
+			localStorage.removeItem(ACTIVE_KEY);
+		}
 		//#endregion
 
 		//#region styles
@@ -47,42 +137,58 @@ window.__ModuleLoader__.load({
 .skin-manager-error{color:var(--dsw-alias-state-error-primary);font-size:13px;line-height:20px;align-items:center;gap:10px;display:flex}
 .skin-manager-error button{border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-primary);font:inherit;cursor:pointer;background:transparent;border-radius:6px;padding:4px 10px}
 @media (max-width:640px){.skin-manager-grid{grid-template-columns:1fr}}
+/* 815 皮肤停用时,隐藏它注入的所有带 data-skin-owner 标记的元素
+   (侧栏《终战诏书》plaque、标题栏品牌、favicon、caption 等)。
+   815 激活时 body[data-dsh-815] 存在,规则失效,元素自动恢复。 */
+body:not([data-dsh-815]) [data-skin-owner="815"]{display:none !important}
+/* 815 皮肤停用时,隐藏它注入的所有带 data-skin-owner 标记的元素
+   (侧栏《终战诏书》plaque、标题栏品牌、favicon、caption 等)。
+   815 激活时 body[data-dsh-815] 存在,规则失效,元素自动恢复。 */
+body:not([data-dsh-815]) [data-skin-owner="815"]{display:none !important}
+/* liang 皮肤停用时隐藏其全屏 backdrop(双保险;liang 插件本身会移除) */
+body:not([data-liang-skin="on"]) .liang-skin-backdrop{display:none !important}
 `;
 		//#endregion
 
 		//#region dicts
 		var zh = {
 			nav: "皮肤管理",
-			hint: "已安装的 DeepSeek Harness 皮肤。启用/停用会写入 profile 配置,重启 dsh web 后生效;支持即时开关的皮肤可立即预览。",
+			hint: "已安装的 DeepSeek Harness 皮肤。点「使用」立即互斥启用一个皮肤(其余即时关闭,无需重启);「设为默认」写入 profile,重启后作为默认生效;「恢复默认」关闭全部皮肤。",
 			loading: "正在读取皮肤…",
 			error: "皮肤列表暂时不可用。",
 			retry: "重试",
 			empty: "尚未安装皮肤 bundle。",
-			enabled: "启用中",
-			disabled: "已停用",
-			enable: "启用",
-			disable: "停用",
-			apply: "立即应用",
-			applyHint: "当前会话即时生效,无需重启",
-			saved: "已更新配置,重启 dsh web 后生效",
-			runtimeApplied: "已应用到当前会话",
+			active: "使用中",
+			inactive: "未使用",
+			use: "使用",
+			useHint: "立即启用此皮肤并关闭其他皮肤(无需重启)",
+			defaultBtn: "设为默认",
+			defaultHint: "写入 profile 配置,重启 dsh web 后作为默认生效",
+			reset: "恢复默认",
+			resetHint: "关闭全部皮肤,回到原始界面(无需重启)",
+			saved: "已更新默认配置,重启 dsh web 后生效",
+			runtimeApplied: "已切换到该皮肤",
+			resetApplied: "已恢复默认外观",
 			version: "v",
 		};
 		var en = {
 			nav: "Skins",
-			hint: "Installed DeepSeek Harness skins. Toggling writes to the profile patch and takes effect after restarting dsh web; skins with a runtime switch can preview immediately.",
+			hint: "Installed DeepSeek Harness skins. “Use” activates one skin and turns the others off immediately (no restart); “Set default” writes the profile patch (applies after restart); “Reset” turns all skins off.",
 			loading: "Reading skins…",
 			error: "Skin list is temporarily unavailable.",
 			retry: "Retry",
 			empty: "No skin bundles installed.",
-			enabled: "On",
-			disabled: "Off",
-			enable: "Enable",
-			disable: "Disable",
-			apply: "Apply now",
-			applyHint: "applies to this session without restart",
-			saved: "Config updated — restart dsh web to apply",
-			runtimeApplied: "Applied to the current session",
+			active: "Active",
+			inactive: "Off",
+			use: "Use",
+			useHint: "activate this skin now and turn off the others (no restart)",
+			defaultBtn: "Set default",
+			defaultHint: "writes the profile patch; becomes default after restarting dsh web",
+			reset: "Reset",
+			resetHint: "turn all skins off and return to the stock look (no restart)",
+			saved: "Default config updated — restart dsh web to apply",
+			runtimeApplied: "Switched to this skin",
+			resetApplied: "Restored default look",
 			version: "v",
 		};
 		//#endregion
@@ -92,11 +198,11 @@ window.__ModuleLoader__.load({
 		var t = zh;
 		function SkinCard(props) {
 			var skin = props.skin;
-			var onToggle = props.onToggle;
-			var onApply = props.onApply;
+			var onUse = props.onUse;
+			var onDefault = props.onDefault;
 			var busy = props.busy;
-			var switchKey = RUNTIME_SWITCHES[skin.package];
-			var enabled = skin.enabled;
+			var hasRuntime = hasAdapter(skin);
+			var active = liveState(skin);
 			var title = skin.name + (skin.version ? " · " + t("version") + skin.version : "");
 			var preview = skin.preview === null
 				? React.createElement("div", { className: "skin-manager-preview-placeholder" }, skin.accent ?? skin.name)
@@ -106,7 +212,7 @@ window.__ModuleLoader__.load({
 				React.createElement("div", { className: "skin-manager-body" },
 					React.createElement("div", { className: "skin-manager-title" },
 						React.createElement("h3", { title: title }, skin.name),
-						React.createElement("span", { className: "skin-manager-badge", "data-on": enabled }, enabled ? t("enabled") : t("disabled")),
+						React.createElement("span", { className: "skin-manager-badge", "data-on": active }, active ? t("active") : t("inactive")),
 					),
 					React.createElement("div", { className: "skin-manager-meta" },
 						[skin.author, skin.package].filter(Boolean).join(" · "),
@@ -118,83 +224,82 @@ window.__ModuleLoader__.load({
 						}),
 					),
 					React.createElement("div", { className: "skin-manager-actions" },
+						hasRuntime && React.createElement("button", {
+							type: "button",
+							className: "skin-manager-btn",
+							"data-primary": !active,
+							disabled: busy,
+							title: t("useHint"),
+							onClick: function () { onUse(skin); },
+						}, t("use")),
 						React.createElement("button", {
 							type: "button",
 							className: "skin-manager-btn",
-							"data-primary": !enabled,
 							disabled: busy,
-							onClick: function () { onToggle(skin, !enabled); },
-						}, enabled ? t("disable") : t("enable")),
-						switchKey !== void 0 && React.createElement("button", {
-							type: "button",
-							className: "skin-manager-btn",
-							disabled: busy,
-							title: t("applyHint"),
-							onClick: function () { onApply(skin, switchKey); },
-						}, t("apply")),
+							title: t("defaultHint"),
+							onClick: function () { onDefault(skin); },
+						}, t("defaultBtn")),
 					),
 				),
 			);
 		}
 
-		function SkinManagerSection() {
-			var state = React.useState({ status: "loading", skins: [], notice: null, busy: null });
+		function SkinManagerSection(props) {
+			var state = React.useState({ status: "loading", skins: [], notice: null, busy: null, version: 0 });
 			var status = state[0].status;
 			var skins = state[0].skins;
 			var notice = state[0].notice;
 			var busy = state[0].busy;
+			var version = state[0].version;
 			var setState = state[1];
+			var bump = function (patch) {
+				setState(function (prev) { return { ...prev, ...patch, version: prev.version + 1 }; });
+			};
 			var load = function () {
-				setState({ status: "loading", skins: [], notice: null, busy: null });
+				bump({ status: "loading", notice: null });
 				fetch(API + "/api/skins", { headers: { Accept: "application/json" } })
 					.then(function (res) {
 						if (!res.ok) throw new Error("http " + res.status);
 						return res.json();
 					})
 					.then(function (data) {
-						setState({ status: "ready", skins: data.skins, notice: null, busy: null });
+						bump({ status: "ready", skins: data.skins, notice: null });
 					})
 					.catch(function () {
-						setState({ status: "error", skins: [], notice: null, busy: null });
+						bump({ status: "error", skins: [], notice: null });
 					});
 			};
 			React.useEffect(function () { load(); }, []);
-			var toggle = function (skin, enabled) {
-				setState({ status: status, skins: skins, notice: notice, busy: skin.rowId });
+			var use = function (skin) {
+				try {
+					activateExclusive(skin.package, skins);
+					bump({ notice: t("runtimeApplied"), busy: null });
+				} catch (error) {
+					bump({ notice: String(error), busy: null });
+				}
+			};
+			var setDefault = function (skin) {
+				bump({ busy: skin.rowId });
 				fetch(API + "/api/toggle", {
 					method: "POST",
 					headers: { "Content-Type": "application/json", Accept: "application/json" },
-					body: JSON.stringify({ rowId: skin.rowId, enabled: enabled }),
+					body: JSON.stringify({ rowId: skin.rowId, enabled: true }),
 				})
 					.then(function (res) { return res.json(); })
 					.then(function (data) {
 						if (!data.ok) throw new Error(data.error ?? "failed");
-						var next = skins.map(function (item) {
-							return item.rowId === skin.rowId ? { ...item, enabled: enabled } : item;
-						});
-						setState({ status: "ready", skins: next, notice: t("saved"), busy: null });
+						bump({ notice: t("saved"), busy: null });
 					})
 					.catch(function () {
-						setState({ status: "ready", skins: skins, notice: t("error"), busy: null });
+						bump({ notice: t("error"), busy: null });
 					});
 			};
-			var applyRuntime = function (skin, switchKey) {
+			var reset = function () {
 				try {
-					var on = switchKey.on;
-					var off = switchKey.off;
-					var value = skin.enabled ? off : on;
-					localStorage.setItem(switchKey.key, value);
-					window.dispatchEvent(new StorageEvent("storage", {
-						key: switchKey.key,
-						newValue: value,
-						storageArea: localStorage,
-					}));
-					var next = skins.map(function (item) {
-						return item.rowId === skin.rowId ? { ...item, enabled: !skin.enabled } : item;
-					});
-					setState({ status: "ready", skins: next, notice: t("runtimeApplied"), busy: null });
+					deactivateAll(skins);
+					bump({ notice: t("resetApplied"), busy: null });
 				} catch (error) {
-					setState({ status: "ready", skins: skins, notice: String(error), busy: null });
+					bump({ notice: String(error), busy: null });
 				}
 			};
 			var content;
@@ -210,8 +315,8 @@ window.__ModuleLoader__.load({
 						key: skin.rowId,
 						skin: skin,
 						busy: busy === skin.rowId,
-						onToggle: toggle,
-						onApply: applyRuntime,
+						onUse: use,
+						onDefault: function (item) { setDefault(item); },
 					});
 				}),
 			);
@@ -219,6 +324,15 @@ window.__ModuleLoader__.load({
 				React.createElement("p", { className: "skin-manager-hint" }, t("hint")),
 				notice !== null && React.createElement("p", { className: "skin-manager-notice" }, notice),
 				content,
+				React.createElement("div", { className: "skin-manager-actions" },
+					React.createElement("button", {
+						type: "button",
+						className: "skin-manager-btn",
+						disabled: busy !== null || skins.length === 0,
+						title: t("resetHint"),
+						onClick: reset,
+					}, t("reset")),
+				),
 			);
 		}
 		//#endregion
@@ -240,6 +354,16 @@ window.__ModuleLoader__.load({
 			ctx.effect(function () {
 				return function () { style.remove(); };
 			}, "dsh-skin-manager: scoped styles");
+			// On load, apply the persisted exclusive preference once the page
+			// (and all skin plugins) has settled.
+			var saved = localStorage.getItem(ACTIVE_KEY);
+			if (saved !== null && saved !== "" && Object.prototype.hasOwnProperty.call(ADAPTERS, saved)) {
+				window.setTimeout(function () {
+					var list = [];
+					for (var packageName in ADAPTERS) list.push({ package: packageName });
+					activateExclusive(saved, list);
+				}, 600);
+			}
 			ctx.slots.inject("settings.section", function () {
 				return ctx.slots.register({
 					name: "settings.section",

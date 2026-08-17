@@ -309,6 +309,11 @@ function createHandler(profileDir) {
 			return;
 		}
 		// POST /plugins/dsh-skin-manager/api/toggle  { rowId, enabled }
+		// Assembly-level enable/disable of ONE skin row. This is intentionally
+		// NOT exclusive: disabling a skin removes its client bundle from the next
+		// boot, so it could never be switched to at runtime. Runtime exclusivity
+		// lives in the browser (client adapters); this endpoint only marks the
+		// patch default and is meant for "install/uninstall-like" management.
 		if (pathname === `${PREFIX}/api/toggle` && req.method === "POST") {
 			let body = "";
 			for await (const chunk of req) body += chunk;
@@ -326,11 +331,11 @@ function createHandler(profileDir) {
 				return;
 			}
 			try {
-				const nowDisabled = await setRowDisabled(profileDir, rowId, !enabled);
+				await setRowDisabled(profileDir, rowId, !enabled);
 				sendJson(res, 200, {
 					ok: true,
 					rowId,
-					enabled: !nowDisabled,
+					enabled,
 					restartRequired: true,
 				});
 			} catch (error) {
