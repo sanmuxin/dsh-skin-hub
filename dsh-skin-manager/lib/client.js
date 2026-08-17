@@ -37,18 +37,25 @@ window.__ModuleLoader__.load({
 				},
 			},
 			"@lengduan/dsh-client-ui-skin-815": {
-				// 815 皮肤由 body[data-dsh-815] 属性驱动(整份 CSS 以它为前缀),
-				// 外加 apply 时注入的带 data-skin-owner="815" 标记的 DOM 元素
-				// (侧栏《终战诏书》plaque、标题栏品牌、favicon、caption 等)。
+				// 815 皮肤由 body[data-dsh-815] 属性驱动(整份主 CSS 以它为前缀,
+				// 配色/背景/文字都在里面),外加 apply 时注入的带
+				// data-skin-owner="815" 标记的 DOM 元素(侧栏《终战诏书》plaque、
+				// 标题栏品牌、favicon、caption 等)。
 				// 停用时移除属性并还原内联样式;注入元素由管理器注入的隐藏规则
 				// 接管——body 无 data-dsh-815 时统一 display:none,激活时自动恢复。
-				// 另外,815 插件注入的 widthSheet 里有一条无条件全局规则
+				// widthSheet:815 插件注入的 style 里第一条是无条件全局规则
 				// `html, body { --vj-sidebar-width: 280px; --vj-titlebar-height: 0px }`,
-				// 它会压扁标题栏/撑宽侧栏导致文字重叠。停用时把整张 sheet 禁用,
-				// 激活时重新启用。
+				// 会把标题栏压成 0 高导致文字重叠,而且与当前 Harness 布局冲突。
+				// 管理器在 815 激活和停用两种状态下都禁用这张 sheet,让标题栏
+				// 始终正常;815 的视觉样式不依赖它,只依赖 data-dsh-815 前缀的
+				// 主 CSS,所以外观不受影响。
 				WIDTH_SHEET_SELECTOR: '[data-skin-chrome="sidebar-width-rule"]',
 				isActive: function () {
 					return document.body.hasAttribute("data-dsh-815");
+				},
+				disableWidthSheet: function () {
+					var sheet = document.querySelector(this.WIDTH_SHEET_SELECTOR);
+					if (sheet !== null && sheet.sheet !== null) sheet.sheet.disabled = true;
 				},
 				activate: function () {
 					var body = document.body;
@@ -60,8 +67,7 @@ window.__ModuleLoader__.load({
 					body.style.setProperty("background-attachment", "fixed");
 					body.style.setProperty("background-repeat", "no-repeat");
 					body.style.setProperty("background-color", "#080a06");
-					var sheet = document.querySelector(this.WIDTH_SHEET_SELECTOR);
-					if (sheet !== null && sheet.sheet !== null) sheet.sheet.disabled = false;
+					this.disableWidthSheet();
 				},
 				deactivate: function () {
 					var body = document.body;
@@ -72,8 +78,7 @@ window.__ModuleLoader__.load({
 						"--vj-photo", "--vj-rescript",
 					];
 					for (var i = 0; i < props.length; i += 1) body.style.removeProperty(props[i]);
-					var sheet = document.querySelector(this.WIDTH_SHEET_SELECTOR);
-					if (sheet !== null && sheet.sheet !== null) sheet.sheet.disabled = true;
+					this.disableWidthSheet();
 				},
 			},
 		};
@@ -355,15 +360,20 @@ body:not([data-liang-skin="on"]) .liang-skin-backdrop{display:none !important}
 				return function () { style.remove(); };
 			}, "dsh-skin-manager: scoped styles");
 			// On load, apply the persisted exclusive preference once the page
-			// (and all skin plugins) has settled.
-			var saved = localStorage.getItem(ACTIVE_KEY);
-			if (saved !== null && saved !== "" && Object.prototype.hasOwnProperty.call(ADAPTERS, saved)) {
-				window.setTimeout(function () {
+			// (and all skin plugins) has settled. Also, unconditionally disable
+			// the 815 skin's widthSheet: its global `--vj-titlebar-height: 0px`
+			// rule breaks the titlebar layout (text overlap) regardless of which
+			// skin is active, and the 815 look does not depend on that sheet.
+			window.setTimeout(function () {
+				var adapter = ADAPTERS["@lengduan/dsh-client-ui-skin-815"];
+				if (adapter !== void 0) adapter.disableWidthSheet();
+				var saved = localStorage.getItem(ACTIVE_KEY);
+				if (saved !== null && saved !== "" && Object.prototype.hasOwnProperty.call(ADAPTERS, saved)) {
 					var list = [];
 					for (var packageName in ADAPTERS) list.push({ package: packageName });
 					activateExclusive(saved, list);
-				}, 600);
-			}
+				}
+			}, 600);
 			ctx.slots.inject("settings.section", function () {
 				return ctx.slots.register({
 					name: "settings.section",
