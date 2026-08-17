@@ -1,0 +1,7 @@
+# dsh-skin-manager bundle patch: insert the skin-manager row (host + client).
+# The row's name resolves to this package; the node half (lib/index.js) is a
+# host plugin serving the skin API, and ./client (lib/client.js) is the
+# browser half registering the settings section.
+- insert:
+    - id: dsh-skin-manager
+      name: dsh-skin-manager
