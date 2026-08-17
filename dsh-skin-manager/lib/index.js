@@ -96,6 +96,37 @@ async function readSkinManifest(pkgDir) {
 	return readJson(join(pkgDir, "skin.json"));
 }
 
+/**
+ * Collect package names referenced by `- insert: { name: ... }` rows in the
+ * profile's own cordis.patch.yml. Skins can be installed this way (patch
+ * insert) instead of being profile bundles — e.g. the Aqua theme.
+ * @param profileDir - the web profile directory.
+ * @returns package names from insert rows, in order.
+ */
+function readPatchInsertNames(profileDir) {
+	const patchPath = join(profileDir, "cordis.patch.yml");
+	const text = existsSync(patchPath) ? readFileSync(patchPath, "utf8") : "[]";
+	if (text.trim() === "") return [];
+	try {
+		const { seq } = parsePatch(text);
+		const names = [];
+		for (const entry of seq.items) {
+			if (entry === null || entry.items === void 0) continue;
+			const insert = entry.get("insert");
+			if (insert === null || typeof insert !== "object" || !Array.isArray(insert.items)) continue;
+			for (const row of insert.items) {
+				if (row !== null && typeof row === "object" && typeof row.get === "function") {
+					const name = row.get("name");
+					if (typeof name === "string" && name !== "") names.push(name);
+				}
+			}
+		}
+		return names;
+	} catch {
+		return [];
+	}
+}
+
 /** Locate a preview image inside a skin bundle. */
 async function findPreview(pkgDir) {
 	const candidates = [
@@ -119,7 +150,7 @@ function looksLikeSkin(pkgMeta, hasManifest) {
 	if (hasManifest) return true;
 	const nameField = typeof pkgMeta?.name === "string" ? pkgMeta.name : "";
 	const description = typeof pkgMeta?.description === "string" ? pkgMeta.description : "";
-	return /skin/i.test(nameField) || /skin/i.test(description);
+	return /skin|theme|backdrop|glassmorphism/i.test(nameField) || /skin|theme|backdrop|glassmorphism/i.test(description);
 }
 
 /**
@@ -130,11 +161,25 @@ function looksLikeSkin(pkgMeta, hasManifest) {
 async function scanSkins(profileDir) {
 	const profilePkg = await readJson(join(profileDir, "package.json"));
 	const bundles = profilePkg?.dsh?.profile?.bundles ?? [];
+	// Merge profile bundles with patch-inserted package names (Aqua-style skins).
+	const insertNames = readPatchInsertNames(profileDir);
+	const seen = new Set();
+	const candidates = [];
+	for (const bundle of bundles) {
+		if (typeof bundle !== "string") continue;
+		if (seen.has(bundle)) continue;
+		seen.add(bundle);
+		candidates.push(bundle);
+	}
+	for (const name of insertNames) {
+		if (seen.has(name)) continue;
+		seen.add(name);
+		candidates.push(name);
+	}
 	const nodeModules = join(profileDir, "node_modules");
 	const skins = [];
-	for (const bundle of bundles) {
+	for (const bundle of candidates) {
 		// Official platform bundles are never skins; nor is the manager itself.
-		if (typeof bundle !== "string") continue;
 		if (bundle === "@deepseek-ai/dsh-base" || bundle === "@deepseek-ai/dsh-web-app") continue;
 		if (bundle === "dsh-skin-manager") continue;
 		const pkgDir = join(nodeModules, ...bundle.split("/"));

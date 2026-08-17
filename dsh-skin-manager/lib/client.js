@@ -36,19 +36,46 @@ window.__ModuleLoader__.load({
 					}));
 				},
 			},
+			"@deepseek-ai/dsh-client-ui-aqua": {
+				// Aqua(玻璃拟态主题)机制:localStorage["dsh.ui-aqua.enabled"]
+				// 取 "true"/"false"(缺省视为开启),插件监听 storage 事件,
+				// 启用时在 <html> 上设 data-dsh-aqua 并注入玻璃层/背景等。
+				// 皮肤管理器写 localStorage + dispatch 即可即时开关。
+				isActive: function () {
+					return document.documentElement.hasAttribute("data-dsh-aqua");
+				},
+				activate: function () {
+					localStorage.setItem("dsh.ui-aqua.enabled", "true");
+					window.dispatchEvent(new StorageEvent("storage", {
+						key: "dsh.ui-aqua.enabled",
+						newValue: "true",
+						storageArea: localStorage,
+					}));
+				},
+				deactivate: function () {
+					localStorage.setItem("dsh.ui-aqua.enabled", "false");
+					window.dispatchEvent(new StorageEvent("storage", {
+						key: "dsh.ui-aqua.enabled",
+						newValue: "false",
+						storageArea: localStorage,
+					}));
+				},
+			},
 			"@lengduan/dsh-client-ui-skin-815": {
 				// 815 皮肤由 body[data-dsh-815] 属性驱动(整份主 CSS 以它为前缀,
 				// 配色/背景/文字都在里面),外加 apply 时注入的带
 				// data-skin-owner="815" 标记的 DOM 元素(侧栏《终战诏书》plaque、
 				// 标题栏品牌、favicon、caption 等)。
-				// 停用时移除属性并还原内联样式;注入元素由管理器注入的隐藏规则
-				// 接管——body 无 data-dsh-815 时统一 display:none,激活时自动恢复。
+				// 真实背景是插件 apply 时用内嵌 SURRENDER_PHOTO(油画)设置的,
+				// 管理器**不要**自己设背景(尤其不能用 docs/preview.png——那是
+				// 宣传预览图,带图标/框,会被误当成背景叠在界面上)。激活时只需
+				// 设置 data-dsh-815 属性触发插件的主 CSS,背景由插件自己保持。
+				// 停用时移除属性 + 还原内联样式;注入元素由管理器注入的隐藏规则
+				// 接管(body 无 data-dsh-815 时统一 display:none)。
 				// widthSheet:815 插件注入的 style 里第一条是无条件全局规则
 				// `html, body { --vj-sidebar-width: 280px; --vj-titlebar-height: 0px }`,
-				// 会把标题栏压成 0 高导致文字重叠,而且与当前 Harness 布局冲突。
-				// 管理器在 815 激活和停用两种状态下都禁用这张 sheet,让标题栏
-				// 始终正常;815 的视觉样式不依赖它,只依赖 data-dsh-815 前缀的
-				// 主 CSS,所以外观不受影响。
+				// 会把标题栏压成 0 高导致文字重叠。管理器在两种状态下都禁用这张
+				// sheet,标题栏始终正常;815 的视觉样式不依赖它。
 				WIDTH_SHEET_SELECTOR: '[data-skin-chrome="sidebar-width-rule"]',
 				isActive: function () {
 					return document.body.hasAttribute("data-dsh-815");
@@ -60,24 +87,17 @@ window.__ModuleLoader__.load({
 				activate: function () {
 					var body = document.body;
 					body.setAttribute("data-dsh-815", "");
-					var preview = API + "/preview?bundle=" + encodeURIComponent("@lengduan/dsh-client-ui-skin-815");
-					body.style.setProperty("background-image", "url(" + preview + ")");
-					body.style.setProperty("background-position", "center 42%");
-					body.style.setProperty("background-size", "cover");
-					body.style.setProperty("background-attachment", "fixed");
-					body.style.setProperty("background-repeat", "no-repeat");
-					body.style.setProperty("background-color", "#080a06");
+					// Do NOT touch background-image: the skin plugin's own apply
+					// already set the real painting via SURRENDER_PHOTO. Overwriting
+					// it with the preview png would layer a promo image on the UI.
 					this.disableWidthSheet();
 				},
 				deactivate: function () {
 					var body = document.body;
 					body.removeAttribute("data-dsh-815");
-					var props = [
-						"background-image", "background-position", "background-size",
-						"background-attachment", "background-repeat", "background-color",
-						"--vj-photo", "--vj-rescript",
-					];
-					for (var i = 0; i < props.length; i += 1) body.style.removeProperty(props[i]);
+					// Leave the plugin's own inline background in place; the manager
+					// CSS rule `body:not([data-dsh-815]){...}` hides it while off,
+					// so re-activating never needs to re-fetch the embedded photo.
 					this.disableWidthSheet();
 				},
 			},
@@ -146,10 +166,19 @@ window.__ModuleLoader__.load({
    (侧栏《终战诏书》plaque、标题栏品牌、favicon、caption 等)。
    815 激活时 body[data-dsh-815] 存在,规则失效,元素自动恢复。 */
 body:not([data-dsh-815]) [data-skin-owner="815"]{display:none !important}
-/* 815 皮肤停用时,隐藏它注入的所有带 data-skin-owner 标记的元素
-   (侧栏《终战诏书》plaque、标题栏品牌、favicon、caption 等)。
-   815 激活时 body[data-dsh-815] 存在,规则失效,元素自动恢复。 */
-body:not([data-dsh-815]) [data-skin-owner="815"]{display:none !important}
+/* 815 的 plaque(侧栏《终战诏书》小图)按作者设计的绝对定位放置,在当前
+   Harness 布局里会和原生元素错位重叠。815 激活时也隐藏它——它只是装饰,
+   隐藏后不影响 815 的配色/背景外观。 */
+body[data-dsh-815] [data-skin-chrome="rescript-plaque"]{display:none !important}
+/* 815 的 caption(右下角说明文字)同样绝对定位(z-index 30),在叠加场景
+   (如与 Aqua 共存)会浮到其他皮肤/界面之上。激活时也隐藏,只保留背景和配色。 */
+body[data-dsh-815] [data-skin-chrome="caption"],
+body[data-dsh-815] [data-skin-chrome="caption-title"],
+body[data-dsh-815] [data-skin-chrome="caption-sub"]{display:none !important}
+/* 815 停用时,隐藏插件在 body 上留下的内联油画背景(管理器 deactivate 不再
+   清内联样式,靠这条规则开关;激活时属性存在,规则失效,背景恢复)。 */
+body:not([data-dsh-815]){background-image:none !important}
+body:not([data-dsh-815]){--vj-photo:none !important}
 /* liang 皮肤停用时隐藏其全屏 backdrop(双保险;liang 插件本身会移除) */
 body:not([data-liang-skin="on"]) .liang-skin-backdrop{display:none !important}
 `;
@@ -359,19 +388,24 @@ body:not([data-liang-skin="on"]) .liang-skin-backdrop{display:none !important}
 			ctx.effect(function () {
 				return function () { style.remove(); };
 			}, "dsh-skin-manager: scoped styles");
-			// On load, apply the persisted exclusive preference once the page
-			// (and all skin plugins) has settled. Also, unconditionally disable
-			// the 815 skin's widthSheet: its global `--vj-titlebar-height: 0px`
-			// rule breaks the titlebar layout (text overlap) regardless of which
-			// skin is active, and the 815 look does not depend on that sheet.
+			// On load, reconcile skins once the page (and all skin plugins) has
+			// settled. If a persisted preference exists, apply it exclusively;
+			// otherwise deactivate EVERY skin so the page never shows two skins
+			// stacked (e.g. aqua defaults on + 815 plugin applies on load).
+			// Also, unconditionally disable the 815 skin's widthSheet: its global
+			// `--vj-titlebar-height: 0px` rule breaks the titlebar layout (text
+			// overlap) regardless of which skin is active, and the 815 look does
+			// not depend on that sheet.
 			window.setTimeout(function () {
 				var adapter = ADAPTERS["@lengduan/dsh-client-ui-skin-815"];
 				if (adapter !== void 0) adapter.disableWidthSheet();
+				var list = [];
+				for (var packageName in ADAPTERS) list.push({ package: packageName });
 				var saved = localStorage.getItem(ACTIVE_KEY);
 				if (saved !== null && saved !== "" && Object.prototype.hasOwnProperty.call(ADAPTERS, saved)) {
-					var list = [];
-					for (var packageName in ADAPTERS) list.push({ package: packageName });
 					activateExclusive(saved, list);
+				} else {
+					deactivateAll(list);
 				}
 			}, 600);
 			ctx.slots.inject("settings.section", function () {
